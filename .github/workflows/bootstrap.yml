@@ -22,6 +22,9 @@ jobs:
           unzip -q honeylock-v0.1.zip -d /tmp/unpack
           cp -a /tmp/unpack/bastion/. .
           rm -f honeylock-v0.1.zip
+          # GITHUB_TOKEN cannot create or update workflow files, so ci.yml is
+          # added separately with a user token after this run.
+          rm -f .github/workflows/ci.yml
 
       - name: Commit and push
         run: |
