@@ -11,6 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
 
       - name: Unpack the uploaded archive over the repository root
         run: |
@@ -24,8 +26,13 @@ jobs:
       - name: Commit and push
         run: |
           set -euo pipefail
+          git checkout -B main
           git config user.name "honeylock bootstrap"
           git config user.email "noreply@users.noreply.github.com"
           git add -A
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+            exit 0
+          fi
           git commit -m "chore: import honeylock v0.1 sources from the uploaded archive"
-          git push
+          git push origin HEAD:main
