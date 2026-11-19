@@ -1,0 +1,7 @@
+{
+  "allowedTools": ["read_*", "list_*", "search", "query_*", "summarize"],
+  "deniedTools": ["shell_exec", "delete_*", "drop_*"],
+  "deniedKeys": ["env", "credentials", "authorization", "private_key"],
+  "egressTools": ["send", "post", "upload", "webhook", "email", "http"],
+  "maxArgBytes": 1000000
+}
