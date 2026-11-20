@@ -3,6 +3,15 @@
   "version": "0.1.0",
   "description": "A tiny, zero-dependency MCP proxy that blocks tool-call exfiltration and leaves a tamper-evident audit trail.",
   "license": "MIT",
+  "author": "brandupai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/brandupai/honeylock.git"
+  },
+  "homepage": "https://github.com/brandupai/honeylock#readme",
+  "bugs": {
+    "url": "https://github.com/brandupai/honeylock/issues"
+  },
   "type": "commonjs",
   "engines": {
     "node": ">=20.11"
@@ -21,7 +30,8 @@
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node --test dist/test/decode.test.js dist/test/detectors.test.js dist/test/ledger.test.js dist/test/lock.test.js dist/test/proxy.test.js",
     "benchmark": "node dist/src/index.js benchmark",
-    "verify": "node dist/src/index.js verify"
+    "verify": "node dist/src/index.js verify",
+    "prepublishOnly": "npm run build"
   },
   "dependencies": {},
   "devDependencies": {
@@ -29,7 +39,8 @@
     "typescript": "^5.7.2"
   },
   "publishConfig": {
-    "provenance": true
+    "provenance": true,
+    "access": "public"
   },
   "keywords": [
     "mcp",
