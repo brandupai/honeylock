@@ -33,10 +33,40 @@ function looksLikePath(value: string): boolean {
   return /^[\w.@%-]+(\/[\w.@ %-]+)+$/.test(value) && value.includes("/");
 }
 
+function sameCase(a: string, b: string): boolean {
+  // Windows paths are case-insensitive and realpath preserves the on-disk case.
+  return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
 function isInside(root: string, target: string): boolean {
-  if (target === root) return true;
+  if (sameCase(target, root)) return true;
   const withSep = root.endsWith(path.sep) ? root : root + path.sep;
-  return target.startsWith(withSep);
+  return process.platform === "win32"
+    ? target.toLowerCase().startsWith(withSep.toLowerCase())
+    : target.startsWith(withSep);
+}
+
+/**
+ * Resolves symlinks even when the leaf does not exist yet.
+ *
+ * `realpathSync` throws on a missing file, which used to let `link/not-there`
+ * through while `link/passwd` was blocked. Resolving the deepest existing
+ * ancestor and re-joining the remainder closes that gap.
+ */
+function realpathDeepest(target: string): string | null {
+  const rest: string[] = [];
+  let current = target;
+  for (;;) {
+    try {
+      const real = realpathSync(current);
+      return rest.length === 0 ? real : path.join(real, ...rest.reverse());
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) return null;
+      rest.push(path.basename(current));
+      current = parent;
+    }
+  }
 }
 
 /** Encoded traversal, symlink escape, NUL bytes. */
@@ -68,19 +98,14 @@ export const pathTraversal: Detector = (_call, refs, ctx) => {
       });
       continue;
     }
-    // Only touch the filesystem when the path exists; that keeps the fast path fast.
-    try {
-      const real = realpathSync(resolved);
-      if (!isInside(ctx.root, real)) {
-        findings.push({
-          detector: "path-traversal",
-          verdict: "block",
-          reason: "symlink resolves outside workspace root",
-          where: ref.where,
-        });
-      }
-    } catch {
-      // Non-existent path: static checks above already cover it.
+    const real = realpathDeepest(resolved);
+    if (real !== null && !isInside(ctx.root, real)) {
+      findings.push({
+        detector: "path-traversal",
+        verdict: "block",
+        reason: "symlink resolves outside workspace root",
+        where: ref.where,
+      });
     }
   }
   return findings;
