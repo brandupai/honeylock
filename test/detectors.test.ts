@@ -79,3 +79,18 @@ test("policy allow and deny lists apply", () => {
 test("oversized arguments are blocked", () => {
   assert.equal(verdict("read_file", { path: "a".repeat(2000) }, { maxArgBytes: 512 }), "block");
 });
+test("a symlink is blocked even when the leaf does not exist", () => {
+  const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), "honeylock-outside-")));
+  const root = realpathSync(mkdtempSync(path.join(os.tmpdir(), "honeylock-inside-")));
+  symlinkSync(outside, path.join(root, "link"), "dir");
+  try {
+    const decision = evaluate(
+      { tool: "read_file", args: { path: "link/missing.txt" } },
+      { policy: { ...DEFAULT_POLICY, workspaceRoot: root }, root },
+    );
+    assert.equal(decision.verdict, "block");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    rmSync(outside, { recursive: true, force: true });
+  }
+});
