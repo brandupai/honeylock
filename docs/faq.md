@@ -18,7 +18,7 @@ Measured, on Linux arm64 with Node 24: 2.9 µs p50 for a normal-sized tool call,
 
 **How many false positives should I expect?**
 
-Unknown, and that is a gap. v0.1 ships 23 vectors, of which five are benign cases used to catch over-blocking. v0.2 adds a corpus of real tool calls and a published false-positive rate, because a security tool that cries wolf gets switched off, and a switched-off tool protects nothing.
+Unknown, and that is a gap. v0.1.1 ships 33 vectors, of which eight are benign cases used to catch over-blocking. v0.2 adds a corpus of real tool calls and a published false-positive rate, because a security tool that cries wolf gets switched off, and a switched-off tool protects nothing.
 
 **It blocked something legitimate. What do I do?**
 
