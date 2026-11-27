@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "npm run build && node --test dist/test/decode.test.js dist/test/detectors.test.js dist/test/ledger.test.js dist/test/lock.test.js dist/test/proxy.test.js",
+    "test": "npm run build && node --test dist/test/decode.test.js dist/test/detectors.test.js dist/test/ledger.test.js dist/test/lock.test.js dist/test/proxy.test.js dist/test/vectors.test.js",
     "benchmark": "node dist/src/index.js benchmark",
     "verify": "node dist/src/index.js verify",
     "prepublishOnly": "npm run build"

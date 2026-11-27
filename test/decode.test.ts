@@ -6,6 +6,7 @@ import {
   findInvisibleChars,
   normalizeShell,
   percentDecodeIterative,
+  scanSql,
   stripSqlComments,
 } from "../src/decode";
 
@@ -30,6 +31,28 @@ test("shell normalization removes quoting and sorts flag groups", () => {
 test("SQL comments are removed before matching", () => {
   assert.equal(stripSqlComments("DROP/**/TABLE users"), "DROP TABLE users");
   assert.equal(stripSqlComments("SELECT 1 -- trailing\n"), "SELECT 1");
+});
+
+test("a comment marker inside a string is not a comment", () => {
+  assert.equal(stripSqlComments("SELECT '--'; DROP TABLE users"), "SELECT '--'; DROP TABLE users");
+  assert.equal(stripSqlComments("SELECT '#x', 1 # real comment"), "SELECT '#x', 1");
+});
+
+test("Postgres # operators are code, not comments", () => {
+  assert.equal(stripSqlComments("SELECT d #> '{a}' FROM t; DROP TABLE u"), "SELECT d #> '{a}' FROM t; DROP TABLE u");
+  assert.equal(stripSqlComments("SELECT d #- '{a}' FROM t"), "SELECT d #- '{a}' FROM t");
+});
+
+test("MySQL executable comments are read as code and other comment bodies are kept aside", () => {
+  assert.equal(stripSqlComments("/*!50000 DROP*/ TABLE users"), "DROP TABLE users");
+  assert.deepEqual(scanSql("SELECT 1 --;DROP TABLE users").comments, [";DROP TABLE users"]);
+});
+
+test("base64 is decoded up to three layers", () => {
+  const once = Buffer.from("AKIAIOSFODNN7EXAMPLE").toString("base64");
+  const twice = Buffer.from(once).toString("base64");
+  const thrice = Buffer.from(twice).toString("base64");
+  assert.ok(decodeLayers(thrice).includes("AKIAIOSFODNN7EXAMPLE"));
 });
 
 test("invisible characters are classified", () => {
