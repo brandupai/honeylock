@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { Ledger } from "./ledger";
-import { blockedFromChanges, compareTools, formatChanges, loadLock, saveLock, type McpTool } from "./lock";
+import { acceptServer, blockedFromChanges, compareTools, formatChanges, loadLock, saveLock, type McpTool } from "./lock";
 import { evaluate, summarize } from "./pipeline";
 import type { Policy } from "./types";
 
@@ -90,27 +90,55 @@ export function startProxy(opts: ProxyOptions): Promise<number> {
 
   const ctx = { policy: opts.policy, root: opts.policy.workspaceRoot };
 
-  const handlePin = (tools: McpTool[]): void => {
-    const lock = loadLock(opts.lockPath);
-    const { changes, next, firstPin } = compareTools(lock, opts.serverName, tools);
-    blockedTools.clear();
-    for (const name of blockedFromChanges(changes)) blockedTools.add(name);
+  /**
+   * One tools/list can span several pages (nextCursor). The pin is compared against
+   * everything seen so far in the listing, never against a single page, so a
+   * changed tool on page 2 cannot be unblocked by page 3, and tools on later pages
+   * are not mistaken for additions.
+   */
+  interface Listing {
+    tools: Map<string, McpTool>;
+    firstPin: boolean | undefined;
+    reported: Set<string>;
+  }
+  let listing: Listing | undefined;
 
-    if (firstPin) {
-      saveLock(opts.lockPath, next);
-      record("pin", { server: opts.serverName, tools: tools.length, mode: "tofu" });
-      log(`pinned ${tools.length} tool definition(s) for "${opts.serverName}" (trust on first use)`);
+  const handlePin = (tools: McpTool[], final: boolean): void => {
+    const current: Listing = listing ?? (listing = { tools: new Map(), firstPin: undefined, reported: new Set() });
+    for (const tool of tools) current.tools.set(tool.name, tool);
+    const all = [...current.tools.values()];
+    const lock = loadLock(opts.lockPath);
+    if (current.firstPin === undefined) current.firstPin = lock.servers[opts.serverName] === undefined;
+
+    if (current.firstPin) {
+      saveLock(opts.lockPath, acceptServer(lock, opts.serverName, all));
+      if (final) {
+        record("pin", { server: opts.serverName, tools: all.length, mode: "tofu" });
+        log(`pinned ${all.length} tool definition(s) for "${opts.serverName}" (trust on first use)`);
+      }
       return;
     }
+
+    const { changes, next } = compareTools(lock, opts.serverName, all, { partial: !final });
+    const blockedNow = blockedFromChanges(changes);
+    // While pages are still arriving, keep blocking tools from the previous listing
+    // that this listing has not reached yet.
+    if (!final) for (const name of blockedTools) if (!current.tools.has(name)) blockedNow.add(name);
+    blockedTools.clear();
+    for (const name of blockedNow) blockedTools.add(name);
+
+    const fresh = changes.filter((c) => !current.reported.has(`${c.kind}:${c.tool}`));
     if (changes.length === 0) return;
 
     saveLock(opts.lockPath, next);
+    if (fresh.length === 0) return;
+    for (const c of fresh) current.reported.add(`${c.kind}:${c.tool}`);
     record("tool-drift", {
       server: opts.serverName,
-      changes: changes.map((c) => ({ tool: c.tool, kind: c.kind, fields: c.fields })),
+      changes: fresh.map((c) => ({ tool: c.tool, kind: c.kind, fields: c.fields })),
     });
     log(`tool definitions changed for "${opts.serverName}"; blocking until reviewed:`);
-    log(formatChanges(changes));
+    log(formatChanges(fresh));
     log("review with `honeylock pin -- <server command>` once you accept the change");
   };
 
@@ -129,6 +157,11 @@ export function startProxy(opts: ProxyOptions): Promise<number> {
     }
 
     if (method !== "tools/call") {
+      if (method === "tools/list") {
+        const listParams = msg["params"];
+        const cursor = listParams !== null && typeof listParams === "object" ? (listParams as Record<string, unknown>)["cursor"] : undefined;
+        if (cursor === undefined) listing = undefined; // a new listing starts at the first page
+      }
       if (method && id !== undefined) pending.set(String(id), method);
       return { forward: msg, responses: [] };
     }
@@ -224,7 +257,10 @@ export function startProxy(opts: ProxyOptions): Promise<number> {
       pending.delete(String(id));
       const result = obj["result"] as Record<string, unknown> | undefined;
       const tools = result?.["tools"];
-      if (method === "tools/list" && Array.isArray(tools)) handlePin(tools as McpTool[]);
+      if (method === "tools/list" && Array.isArray(tools)) {
+        const nextCursor = result?.["nextCursor"];
+        handlePin(tools as McpTool[], typeof nextCursor !== "string" || nextCursor === "");
+      }
     }
     client.write(`${line}\n`);
   };

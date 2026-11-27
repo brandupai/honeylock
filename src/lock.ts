@@ -67,8 +67,16 @@ export interface CompareResult {
  *   rug pull changes what the model is told the tool does.
  * - Added tool: reported and left unpinned, so it is blocked until accepted.
  * - Removed tool: reported; nothing to pin.
+ * - Partial listing (one page of a paginated tools/list): tools that have not
+ *   arrived yet are neither reported as removed nor dropped from the pin.
  */
-export function compareTools(lock: LockFile, server: string, tools: McpTool[]): CompareResult {
+export function compareTools(
+  lock: LockFile,
+  server: string,
+  tools: McpTool[],
+  options: { partial?: boolean } = {},
+): CompareResult {
+  const partial = options.partial === true;
   const pinned = lock.servers[server]?.tools;
   const firstPin = pinned === undefined;
   const nextTools: Record<string, LockedTool> = {};
@@ -102,13 +110,18 @@ export function compareTools(lock: LockFile, server: string, tools: McpTool[]): 
     changes.push({ tool: tool.name, kind: "changed", fields });
   }
 
-  for (const name of Object.keys(pinned ?? {})) {
-    if (!seen.has(name)) changes.push({ tool: name, kind: "removed", fields: [] });
+  if (!partial) {
+    for (const name of Object.keys(pinned ?? {})) {
+      if (!seen.has(name)) changes.push({ tool: name, kind: "removed", fields: [] });
+    }
   }
 
   const next: LockFile = {
     version: 1,
-    servers: { ...lock.servers, [server]: { tools: nextTools } },
+    servers: {
+      ...lock.servers,
+      [server]: { tools: partial ? { ...(pinned ?? {}), ...nextTools } : nextTools },
+    },
   };
 
   return { changes: firstPin ? [] : changes, next, firstPin };

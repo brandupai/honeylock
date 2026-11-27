@@ -105,7 +105,7 @@ function ensureDir(file: string): void {
   mkdirSync(path.dirname(path.resolve(file)), { recursive: true, mode: 0o700 });
 }
 
-async function discoverTools(command: string[], timeoutMs = 8000): Promise<McpTool[]> {
+export async function discoverTools(command: string[], timeoutMs = 8000): Promise<McpTool[]> {
   const [cmd, ...args] = command;
   if (!cmd) throw new Error("no server command given");
   const child = spawn(cmd, args, { stdio: ["pipe", "pipe", "pipe"] });
@@ -113,6 +113,9 @@ async function discoverTools(command: string[], timeoutMs = 8000): Promise<McpTo
   return new Promise<McpTool[]>((resolve, reject) => {
     let buffer = "";
     let stage: "init" | "list" = "init";
+    let nextId = 2;
+    const collected: McpTool[] = [];
+    const MAX_PAGES = 100;
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`server did not answer tools/list within ${timeoutMs} ms`));
@@ -146,11 +149,31 @@ async function discoverTools(command: string[], timeoutMs = 8000): Promise<McpTo
           child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} })}\n`);
           continue;
         }
-        if (stage === "list" && msg["id"] === 2) {
+        if (stage === "list" && msg["id"] === nextId) {
           const result = msg["result"] as Record<string, unknown> | undefined;
           const tools = result?.["tools"];
-          if (Array.isArray(tools)) done(tools as McpTool[]);
-          else reject(new Error("tools/list returned no tools array"));
+          if (!Array.isArray(tools)) {
+            clearTimeout(timer);
+            child.kill();
+            reject(new Error("tools/list returned no tools array"));
+            return;
+          }
+          collected.push(...(tools as McpTool[]));
+          const cursor = result?.["nextCursor"];
+          if (typeof cursor === "string" && cursor !== "") {
+            if (nextId > MAX_PAGES) {
+              clearTimeout(timer);
+              child.kill();
+              reject(new Error(`tools/list has more than ${MAX_PAGES} pages`));
+              return;
+            }
+            nextId++;
+            child.stdin.write(
+              `${JSON.stringify({ jsonrpc: "2.0", id: nextId, method: "tools/list", params: { cursor } })}\n`,
+            );
+            continue;
+          }
+          done(collected);
           return;
         }
       }
