@@ -2,6 +2,22 @@
 
 Dates are ISO. This project follows [Semantic Versioning](https://semver.org/).
 
+## Unreleased (0.1.1)
+
+### Fixed
+
+- **Ledger with several writers.** Proxies sharing one ledger file each kept their own sequence number, so `verify` failed and the next proxy refused to start. Appends now take a lock file and continue from the real tail. Cost: ledger append p50 about 8.5 µs to about 18 µs on Linux x64, Node 22 (three runs each).
+- **Pinning with paginated `tools/list`.** Later pages were reported as added tools, and a changed tool on an earlier page was unblocked by a later page. The pin is now compared against the whole listing, and `honeylock pin` follows `nextCursor`.
+- **SQL comment handling.** `#` and `--` inside strings, and Postgres `#>` / `#-` operators, were treated as comments and hid a following `DROP`. SQL is now split into code and comments with quoting respected. A destructive statement inside a comment is a `review`.
+- **Secrets**: percent-encoded keys are decoded, and base64 is decoded up to three layers (was two).
+- **Paths**: `file://` URLs, `~` and `$HOME` are expanded before the containment check.
+- **README** claimed that truncation of the ledger is caught. It is not, without an external head hash. The text now says so.
+
+### Changed
+
+- 33 vectors (8 benign) and 44 tests. `test/vectors.test.ts` runs the whole vector file as part of the suite and the CI.
+- Shell and SQL limitations that were found while testing are now listed in the README.
+
 ## 0.1.0 — 2026-11-19
 
 First public version. Scope was chosen so that everything shipped is measured, and everything unmeasured is listed as missing.

@@ -3,6 +3,8 @@
 "use strict";
 
 const rugPull = process.env.RUGPULL === "1";
+// PAGINATE=1 serves tools/list one tool per page, using nextCursor.
+const paginate = process.env.PAGINATE === "1";
 let listed = 0;
 
 const tools = [
@@ -65,7 +67,15 @@ function handle(msg) {
       });
     } else if (msg.method === "tools/list") {
       listed += 1;
-      send({ jsonrpc: "2.0", id: msg.id, result: { tools: currentTools() } });
+      if (paginate) {
+        const start = Number((msg.params && msg.params.cursor) || 0);
+        const all = currentTools();
+        const result = { tools: all.slice(start, start + 1) };
+        if (start + 1 < all.length) result.nextCursor = String(start + 1);
+        send({ jsonrpc: "2.0", id: msg.id, result });
+      } else {
+        send({ jsonrpc: "2.0", id: msg.id, result: { tools: currentTools() } });
+      }
     } else if (msg.method === "tools/call") {
       send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: `called:${msg.params.name}` }] } });
     }

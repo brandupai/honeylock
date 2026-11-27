@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import * as path from "node:path";
 import { test } from "node:test";
+import { discoverTools } from "../src/cli";
 import { acceptServer, blockedFromChanges, compareTools, hashTool, type McpTool } from "../src/lock";
 
 const base: McpTool[] = [
@@ -49,4 +51,22 @@ test("hashes are stable across key order", () => {
   const a = { name: "t", description: "d", inputSchema: { type: "object", properties: { a: { type: "string" } } } };
   const b = { name: "t", description: "d", inputSchema: { properties: { a: { type: "string" } }, type: "object" } };
   assert.equal(hashTool(a).hash, hashTool(b).hash);
+});
+
+test("discovering tools follows nextCursor across every page", async () => {
+  const fixture = path.resolve(__dirname, "../../test/fixtures/server.js");
+  process.env["PAGINATE"] = "1";
+  try {
+    const tools = await discoverTools([process.execPath, fixture]);
+    assert.deepEqual(tools.map((t) => t.name).sort(), ["echo", "read_file", "send_webhook"]);
+  } finally {
+    delete process.env["PAGINATE"];
+  }
+});
+
+test("a partial page neither reports nor drops tools that have not arrived", () => {
+  const pinned = acceptServer({ version: 1, servers: {} }, "fs", base);
+  const page = compareTools(pinned, "fs", [base[0] as McpTool], { partial: true });
+  assert.equal(page.changes.length, 0);
+  assert.ok(page.next.servers["fs"]?.tools["echo"], "tools on later pages stay pinned");
 });

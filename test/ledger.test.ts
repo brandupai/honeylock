@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawn } from "node:child_process";
 import { test } from "node:test";
 import { Ledger, verifyLedgerFile } from "../src/ledger";
 
@@ -71,5 +72,71 @@ test("appending to a tampered ledger is refused", () => {
   ledger.append("allow", { tool: "a" });
   writeFileSync(file, `${readFileSync(file, "utf8")}{"seq":2}\n`);
   assert.throws(() => new Ledger(file, key), /does not verify/);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("two writers sharing one file still produce a chain that verifies", () => {
+  const { dir, file } = tempLedger();
+  const a = new Ledger(file, key);
+  const b = new Ledger(file, key);
+  a.append("allow", { who: "a", n: 1 });
+  b.append("allow", { who: "b", n: 1 });
+  a.append("block", { who: "a", n: 2 });
+  b.append("allow", { who: "b", n: 2 });
+
+  const result = verifyLedgerFile(file, key);
+  assert.equal(result.ok, true, result.error);
+  assert.deepEqual(result.records.map((r) => r.seq), [1, 2, 3, 4]);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("a stale lock left by a crashed writer does not block appends forever", () => {
+  const { dir, file } = tempLedger();
+  const ledger = new Ledger(file, key);
+  ledger.append("allow", { n: 1 });
+  writeFileSync(`${file}.lock`, "99999999\n");
+  const old = new Date(Date.now() - 60_000);
+  utimesSync(`${file}.lock`, old, old);
+  ledger.append("allow", { n: 2 });
+  assert.equal(verifyLedgerFile(file, key).ok, true);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("verify reports the event count so the head can be anchored elsewhere", () => {
+  const { dir, file } = tempLedger();
+  const ledger = new Ledger(file, key);
+  ledger.append("allow", { n: 1 });
+  ledger.append("allow", { n: 2 });
+  const lines = readFileSync(file, "utf8").trimEnd().split("\n");
+  // Dropping the tail still verifies: a hash chain alone cannot see it. This test
+  // documents that limit so nobody claims truncation is detected.
+  writeFileSync(file, `${lines[0]}\n`);
+  const result = verifyLedgerFile(file, key);
+  assert.equal(result.ok, true);
+  assert.equal(result.records.length, 1);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("four processes appending at the same time leave one verifiable chain", async () => {
+  const { dir, file } = tempLedger();
+  const ledgerModule = path.resolve(__dirname, "../src/ledger.js");
+  const script = `
+    const { Ledger } = require(${JSON.stringify(ledgerModule)});
+    const l = new Ledger(${JSON.stringify(file)}, Buffer.from(${JSON.stringify(key.toString("utf8"))}, "utf8"));
+    for (let i = 0; i < 150; i++) l.append("allow", { pid: process.pid, i });
+  `;
+  const exits = await Promise.all(
+    [0, 1, 2, 3].map(
+      () =>
+        new Promise<number | null>((resolve) => {
+          const child = spawn(process.execPath, ["-e", script], { stdio: "ignore" });
+          child.on("close", (code) => resolve(code));
+        }),
+    ),
+  );
+  assert.deepEqual(exits, [0, 0, 0, 0]);
+  const result = verifyLedgerFile(file, key);
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.records.length, 600);
   rmSync(dir, { recursive: true, force: true });
 });

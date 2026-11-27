@@ -23,6 +23,10 @@ HMAC-SHA256(key, seq + "\n" + ts + "\n" + type + "\n" + canonicalJSON(data) + "\
 
 `canonicalJSON` sorts object keys, so the same event always produces the same signature on every platform.
 
+## Several proxies, one ledger
+
+Wrapping more than one server from the same folder makes every proxy append to the same file. Appends take a lock file (`ledger.jsonl.lock`) and continue from the real tail, so the chain stays single and verifiable. A lock left by a crashed proxy is taken over after 10 seconds. If an append waits more than 5 seconds for the lock it fails with `ledger is locked by another writer`, and the proxy logs it on `stderr`. One ledger per server (`--ledger`) avoids the shared lock entirely.
+
 ## Event types
 
 | Type | When | Useful for |
@@ -39,14 +43,14 @@ HMAC-SHA256(key, seq + "\n" + ts + "\n" + type + "\n" + canonicalJSON(data) + "\
 
 ## What it proves
 
-- The sequence of decisions in this file is intact: no line edited, removed, reordered or inserted after the fact.
+- The sequence of decisions in this file is intact: no line edited, reordered or inserted after the fact, and no gap in the middle.
 - Each line was written by something holding the key.
 
 ## What it does not prove
 
 - That the events were written honestly in the first place. A compromised proxy writes convincing lies.
 - That nothing happened outside the proxy. A direct network call by the server does not appear here.
-- That the file is complete. Deleted trailing lines are only detectable with an external anchor.
+- That the file is complete. Deleted trailing lines are only detectable with an external anchor: after a truncation `honeylock verify` still says `ok`, with a smaller event count.
 
 If you need more than that, export the head hash.
 

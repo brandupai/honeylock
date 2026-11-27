@@ -188,3 +188,72 @@ test("a changed tool description is blocked until it is reviewed", async () => {
   assert.equal(await second.close(), 0);
   rmSync(dir, { recursive: true, force: true });
 });
+
+async function listAllPages(h: Harness, firstId: number): Promise<void> {
+  let cursor: string | undefined;
+  let id = firstId;
+  for (let guard = 0; guard < 10; guard++) {
+    h.send({ jsonrpc: "2.0", id, method: "tools/list", params: cursor === undefined ? {} : { cursor } });
+    const page = await h.waitFor((m) => m.id === id, `tools/list page ${id}`);
+    const next = page.result?.["nextCursor"];
+    if (typeof next !== "string") return;
+    cursor = next;
+    id++;
+  }
+  throw new Error("too many pages");
+}
+
+test("a changed tool on a later page of a paginated tools/list stays blocked", async () => {
+  const dir = tempDir();
+
+  const first = startProxy(dir, { PAGINATE: "1" });
+  first.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  await first.waitFor((m) => m.id === 1, "initialize response");
+  await listAllPages(first, 10);
+  assert.equal(await first.close(), 0);
+
+  const second = startProxy(dir, { PAGINATE: "1", RUGPULL: "1" });
+  second.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  await second.waitFor((m) => m.id === 1, "initialize response");
+  await listAllPages(second, 10);
+
+  second.send({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "read_file", arguments: { path: "docs/a.md" } },
+  });
+  const refused = await second.waitFor((m) => m.id === 3, "call to a changed tool");
+  assert.equal(refused.error?.code, -32001);
+  assert.match(refused.error?.message ?? "", /not pinned/);
+
+  assert.equal(await second.close(), 0);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test("an unchanged paginated server is not blocked on later pages", async () => {
+  const dir = tempDir();
+
+  const first = startProxy(dir, { PAGINATE: "1" });
+  first.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  await first.waitFor((m) => m.id === 1, "initialize response");
+  await listAllPages(first, 10);
+  assert.equal(await first.close(), 0);
+
+  const second = startProxy(dir, { PAGINATE: "1" });
+  second.send({ jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+  await second.waitFor((m) => m.id === 1, "initialize response");
+  await listAllPages(second, 10);
+
+  second.send({
+    jsonrpc: "2.0",
+    id: 3,
+    method: "tools/call",
+    params: { name: "send_webhook", arguments: { payload: "hello" } },
+  });
+  const ok = await second.waitFor((m) => m.id === 3, "call to an unchanged tool");
+  assert.equal(ok.error, undefined);
+
+  assert.equal(await second.close(), 0);
+  rmSync(dir, { recursive: true, force: true });
+});

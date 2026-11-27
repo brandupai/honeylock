@@ -54,6 +54,10 @@ The proxy refuses to extend a chain that is already broken, which is deliberate:
 mv .honeylock/ledger.jsonl .honeylock/ledger-broken-$(date +%s).jsonl
 ```
 
+## "ledger is locked by another writer"
+
+Another proxy has held `ledger.jsonl.lock` for more than five seconds. Locks older than ten seconds are taken over automatically, so this usually means a slow disk or a very busy shared ledger. Give each server its own file with `--ledger`, or delete a lock you know is orphaned.
+
 ## Windows: paths or exit codes look odd
 
 - Path containment compares resolved strings, so a case-insensitive filesystem can produce a false negative (a file differing only in case is treated as outside). Report it if you hit it.

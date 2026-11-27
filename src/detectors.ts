@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import {
   decodeLayers,
@@ -6,7 +7,7 @@ import {
   looksBase64,
   normalizeShell,
   percentDecodeIterative,
-  stripSqlComments,
+  scanSql,
 } from "./decode";
 import type { Finding, Policy, ToolCall } from "./types";
 import { collectStrings, entropyBitsPerChar, type StringRef } from "./util";
@@ -25,8 +26,11 @@ const PATH_KEY_RE = /(path|file|dir|folder|dest|target|source|src|out|output|roo
 const COMMAND_KEY_RE = /(command|cmd|script|shell|exec|run|args|argv|line|code)/i;
 const SQL_KEY_RE = /(sql|query|statement|filter|where)/i;
 
+const HOME_PREFIX_RE = /^(~|\$HOME|\$\{HOME\})(?=[\\/]|$)/;
+
 function looksLikePath(value: string): boolean {
   if (value.length < 3 || value.length > 4096) return false;
+  if (/^file:/i.test(value)) return true;
   if (value.includes("://")) return false;
   if (value.startsWith("/") || value.startsWith("./") || value.startsWith("../") || value.startsWith("~")) return true;
   if (value.includes("\\")) return true;
@@ -36,6 +40,13 @@ function looksLikePath(value: string): boolean {
 function sameCase(a: string, b: string): boolean {
   // Windows paths are case-insensitive and realpath preserves the on-disk case.
   return process.platform === "win32" ? a.toLowerCase() === b.toLowerCase() : a === b;
+}
+
+/** File URLs and home shorthands, expanded the way a server that accepts them would. */
+function expandPathForms(decoded: string): string {
+  let value = decoded.replace(/^file:(\/\/[^/]*)?/i, "");
+  if (HOME_PREFIX_RE.test(value)) value = os.homedir() + value.replace(HOME_PREFIX_RE, "");
+  return value;
 }
 
 function isInside(root: string, target: string): boolean {
@@ -87,7 +98,7 @@ export const pathTraversal: Detector = (_call, refs, ctx) => {
       });
       continue;
     }
-    const unixish = decoded.replace(/\\/g, "/");
+    const unixish = expandPathForms(decoded).replace(/\\/g, "/");
     const resolved = path.isAbsolute(unixish) ? path.normalize(unixish) : path.resolve(ctx.root, unixish);
     if (!isInside(ctx.root, resolved)) {
       findings.push({
@@ -175,9 +186,11 @@ export const sqlObfuscation: Detector = (_call, refs) => {
     const keyLooksSql = SQL_KEY_RE.test(ref.where.split(".").pop() ?? "");
     const looksSql = /\b(select|insert|update|delete|drop|truncate|alter)\b/i.test(ref.value);
     if (!keyLooksSql && !looksSql) continue;
-    const stripped = stripSqlComments(ref.value).toUpperCase();
+    const { code, comments } = scanSql(ref.value);
+    const stripped = code.replace(/\s+/g, " ").trim().toUpperCase();
+    const lowered = stripped.toLowerCase();
     for (const rule of SQL_BLOCKS) {
-      if (rule.re.test(stripped.toLowerCase())) {
+      if (rule.re.test(lowered)) {
         findings.push({
           detector: "sql-obfuscation",
           verdict: "block",
@@ -186,13 +199,27 @@ export const sqlObfuscation: Detector = (_call, refs) => {
         });
       }
     }
-    if (stripped !== ref.value.toUpperCase() && /\b(drop|union|delete|update)\b/.test(stripped)) {
+    if (stripped !== ref.value.toUpperCase() && /\b(drop|union|delete|update)\b/.test(lowered)) {
       findings.push({
         detector: "sql-obfuscation",
         verdict: "review",
         reason: "SQL comments hide a sensitive statement",
         where: ref.where,
       });
+    }
+    // Dialects disagree on what is a comment (MySQL needs a space after `--`, Postgres
+    // does not), so a destructive statement sitting inside one needs a human.
+    for (const comment of comments) {
+      const text = comment.replace(/\s+/g, " ").trim().toLowerCase();
+      if (SQL_BLOCKS.some((rule) => rule.re.test(text))) {
+        findings.push({
+          detector: "sql-obfuscation",
+          verdict: "review",
+          reason: "destructive statement inside a SQL comment",
+          where: ref.where,
+        });
+        break;
+      }
     }
   }
   return findings;
@@ -215,10 +242,14 @@ export const secretEgress: Detector = (call, refs, ctx) => {
   const canEgress = ctx.policy.egressTools.some((t) => tool.includes(t.toLowerCase()));
 
   for (const ref of refs) {
-    const variants = [ref.value, ...decodeLayers(ref.value)];
+    const unescaped = ref.value.includes("%") ? percentDecodeIterative(ref.value) : ref.value;
+    const bases = unescaped === ref.value ? [ref.value] : [ref.value, unescaped];
+    const variants = bases.flatMap((base) => [base, ...decodeLayers(base)]);
+    const reported = new Set<string>();
     for (const value of variants) {
       for (const pattern of SECRET_PATTERNS) {
-        if (pattern.re.test(value)) {
+        if (pattern.re.test(value) && !reported.has(pattern.reason)) {
+          reported.add(pattern.reason);
           findings.push({
             detector: "secret-egress",
             verdict: "block",

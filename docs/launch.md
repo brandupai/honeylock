@@ -30,7 +30,7 @@ Ready-to-paste text for the places this gets announced. Edit the parts in `[brac
 >
 > So I built a filter for the stdio pipe. It is not a gateway: one process, no dependencies, no config server. It normalises tool arguments and refuses the obvious shapes of attack (path escapes including double-encoded and Windows separators, quote-broken shell, SQL hidden behind comments, Unicode tag characters, keys and high-entropy blobs headed for an egress tool). It also pins `tools/list` so a server that quietly rewrites a tool description gets blocked, and writes every decision to an HMAC-chained log.
 >
-> The part I would most like feedback on is honesty of claims. I deliberately did not write "100% detection" anywhere. There is a benchmark with 23 vectors (5 of them benign, to catch over-blocking), p50 is 2.9 µs for a normal call, but 8.8 ms for a 1 MB argument, and the README says so. The threat model lists what is out of scope, including exfiltration that never touches a tool call.
+> The part I would most like feedback on is honesty of claims. I deliberately did not write "100% detection" anywhere. There is a benchmark with 33 vectors (8 of them benign, to catch over-blocking), p50 is 2.9 µs for a normal call, but 8.8 ms for a 1 MB argument, and the README says so. The threat model lists what is out of scope, including exfiltration that never touches a tool call.
 >
 > Missing on purpose in v0.1: HTTP/SSE, an interactive approver, canary tokens. Those are the roadmap. What I am unsure about is whether the detectors are the right six, and whether anyone would actually accept "blocked until reviewed" for pin drift in a CI pipeline.
 >
@@ -72,7 +72,7 @@ Ready-to-paste text for the places this gets announced. Edit the parts in `[brac
 
 > Built a checkpoint for MCP tool calls: normalises arguments, blocks path escapes, obfuscated shell, hidden Unicode and secrets heading out, pins tool definitions against rug pulls, and signs every decision into a hash-chained log.
 >
-> Zero dependencies. 23 vectors, 30 tests, p50 2.9 µs.
+> Zero dependencies. 33 vectors, 44 tests, p50 2.9 µs (v0.1.0 measurement, re-measure before posting).
 >
 > It is not a sandbox and the README says so. [link]
 

@@ -185,5 +185,85 @@
     },
     "expect": "allow",
     "why": "a checksum is high-entropy but stays local, so it must not be blocked"
+  },
+  {
+    "id": "path-07",
+    "category": "path-traversal",
+    "tool": "read_file",
+    "args": { "path": "~/.ssh/id_rsa" },
+    "expect": "block",
+    "why": "home-directory shorthand resolves outside the workspace once a server expands it"
+  },
+  {
+    "id": "path-08",
+    "category": "path-traversal",
+    "tool": "read_file",
+    "args": { "path": "file:///etc/passwd" },
+    "expect": "block",
+    "why": "file URL pointing outside the workspace root"
+  },
+  {
+    "id": "path-09",
+    "category": "path-traversal",
+    "tool": "read_resource",
+    "args": { "uri": "file:///etc/shadow" },
+    "expect": "block",
+    "why": "file URL under a key that does not look like a path"
+  },
+  {
+    "id": "sql-06",
+    "category": "sql-obfuscation",
+    "tool": "query_db",
+    "args": { "query": "SELECT data #> '{a}' FROM t; DROP TABLE users" },
+    "expect": "block",
+    "why": "Postgres #> operator must not be read as a comment that hides the DROP"
+  },
+  {
+    "id": "sql-07",
+    "category": "sql-obfuscation",
+    "tool": "query_db",
+    "args": { "query": "SELECT '--'; DROP TABLE users" },
+    "expect": "block",
+    "why": "a comment marker inside a string literal does not start a comment"
+  },
+  {
+    "id": "sql-08",
+    "category": "benign",
+    "tool": "query_db",
+    "args": { "query": "SELECT data #> '{a}' FROM events WHERE id = 1" },
+    "expect": "allow",
+    "why": "Postgres JSON path operator in an ordinary bounded read"
+  },
+  {
+    "id": "sql-09",
+    "category": "sql-review",
+    "tool": "query_db",
+    "args": { "query": "SELECT 1 --;DROP TABLE users" },
+    "expect": "review",
+    "why": "MySQL needs a space after --, so this may run the DROP; a destructive statement inside a comment needs a human"
+  },
+  {
+    "id": "secret-05",
+    "category": "secret-egress",
+    "tool": "send_webhook",
+    "args": { "payload": "%41KIAIOSFODNN7EXAMPLE" },
+    "expect": "block",
+    "why": "percent-encoded AWS key id"
+  },
+  {
+    "id": "secret-06",
+    "category": "secret-egress",
+    "tool": "send_webhook",
+    "args": { "payload": "VVZWMFNsRlZiRkJWTUZwUVVrVTFUMDR3VmxsUlZURlJWRVZWUFE9PQ==" },
+    "expect": "block",
+    "why": "AWS key id wrapped in three base64 layers"
+  },
+  {
+    "id": "secret-07",
+    "category": "benign",
+    "tool": "send_webhook",
+    "args": { "payload": "progress 100%25 done, 3 of 3 files" },
+    "expect": "allow",
+    "why": "a percent sign in ordinary text"
   }
 ]

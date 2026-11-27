@@ -54,14 +54,78 @@ export function normalizeShell(input: string): string {
   return out.join(" ");
 }
 
+export interface SqlScan {
+  /** The statement with comments removed. Quoted text is kept as written. */
+  code: string;
+  /** The body of every comment that was removed. */
+  comments: string[];
+}
+
+/**
+ * Splits SQL into code and comments without being fooled by quoting: a `--` or `#`
+ * inside a string literal is not a comment, and `#>` / `#-` are Postgres operators.
+ * A MySQL executable comment (`/*!50000 ... *\/`) runs, so its body counts as code.
+ * Anything ambiguous between dialects is kept visible to the detectors, never hidden.
+ */
+export function scanSql(input: string): SqlScan {
+  let code = "";
+  const comments: string[] = [];
+  const n = input.length;
+  let i = 0;
+  while (i < n) {
+    const ch = input.charAt(i);
+    if (ch === "'" || ch === '"' || ch === "`") {
+      let j = i + 1;
+      while (j < n) {
+        const c = input.charAt(j);
+        if (c === "\\" && ch !== "`") {
+          j += 2;
+          continue;
+        }
+        if (c === ch) {
+          if (input.charAt(j + 1) === ch) {
+            j += 2;
+            continue;
+          }
+          break;
+        }
+        j++;
+      }
+      code += input.slice(i, Math.min(j + 1, n));
+      i = j + 1;
+      continue;
+    }
+    if (ch === "/" && input.charAt(i + 1) === "*") {
+      const end = input.indexOf("*/", i + 2);
+      const body = input.slice(i + 2, end === -1 ? n : end);
+      i = end === -1 ? n : end + 2;
+      if (body.startsWith("!")) code += ` ${body.replace(/^!\d*/, "")} `;
+      else {
+        comments.push(body);
+        code += " ";
+      }
+      continue;
+    }
+    const lineComment =
+      (ch === "-" && input.charAt(i + 1) === "-") ||
+      (ch === "#" && input.charAt(i + 1) !== ">" && input.charAt(i + 1) !== "-");
+    if (lineComment) {
+      let end = input.indexOf("\n", i);
+      if (end === -1) end = n;
+      comments.push(input.slice(i + (ch === "#" ? 1 : 2), end));
+      code += " ";
+      i = end;
+      continue;
+    }
+    code += ch;
+    i++;
+  }
+  return { code, comments };
+}
+
 /** Drops SQL comments and collapses whitespace: `DROP/**\/TABLE` -> `DROP TABLE`. */
 export function stripSqlComments(input: string): string {
-  return input
-    .replace(/\/\*[\s\S]*?\*\//g, " ")
-    .replace(/--[^\n]*/g, " ")
-    .replace(/#[^\n]*/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return scanSql(input).code.replace(/\s+/g, " ").trim();
 }
 
 export interface InvisibleHit {
@@ -99,7 +163,7 @@ export function looksBase64(s: string): boolean {
 }
 
 /** Decodes base64 layers and hex, so a doubly encoded secret is still visible in plain text. */
-export function decodeLayers(input: string, depth = 2): string[] {
+export function decodeLayers(input: string, depth = 3): string[] {
   const results: string[] = [];
   let current = input;
   for (let level = 0; level < depth; level++) {

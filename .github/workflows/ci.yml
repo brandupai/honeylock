@@ -37,6 +37,7 @@ jobs:
           dist/test/ledger.test.js
           dist/test/lock.test.js
           dist/test/proxy.test.js
+          dist/test/vectors.test.js
       - name: Adversarial vectors
         run: node dist/src/index.js benchmark --iterations 200
       - name: Latency report
